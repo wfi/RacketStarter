@@ -82,6 +82,7 @@
       (format (current-output-port) "~&go~%")
       (flush-output (current-output-port)))
     
+    ...*** need to either replace common-lisp "position" function or rethink the way the parameters are handled in the first place ***....
     (define (par-value string)
       "Helper function for parsing game state input from the server."
       (string->number (substring string (position #\space string) (length string))))
