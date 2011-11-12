@@ -83,11 +83,6 @@
       (let ((nl (new-location row col direction)))
         (= 1 (vector-ref (vector-ref game-map (car nl)) (cdr nl)))))
     
-    (define (finish-turn )
-      "Prints the \"finish turn\" string to standard output."
-      (format (current-output-port) "~&go~%")
-      (flush-output (current-output-port)))
-    
     (define (starts-with sequence subsequence)
       "Checks if the given sequence contains the subsequence"
       (let ((sublen (length subsequence)))
@@ -211,12 +206,12 @@
       (reset-some-state)
       (do ((line (read-line (current-input-port)) (read-line (current-input-port))))
         ((> (string-length line) 0)
-         (cond [(string=? (substring line 0 3) "end")
+         (cond [(starts-with line "end")
                 (parse-turn) #t]
-               [(string=? (substring line 0 6) "turn 0")
+               [(starts-with line "turn 0")
                 (set! turn 0)
                 (setup) #f]
-               [(string=? (substring line 0 5) "turn ")
+               [(starts-with line "turn ")
                 (set! turn (string->number (second (regexp-split " +" line))))
                 (parse-turn) #f]))
         ))
@@ -232,9 +227,15 @@
       (format *debug-io* "~&User interrupt. Aborting...~%")
       (quit))
     |#
-    ));;end class definition
+    )) ;;--- end class definition
 
 ;; helper functions
+
+(define (finish-turn )
+  "Prints the \"finish turn\" string to standard output."
+  (format (current-output-port) "~&go~%")
+  (flush-output (current-output-port)))
+    
 
 
 ;;; Globals
