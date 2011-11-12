@@ -6,46 +6,52 @@
 
 (define state%
   (class object%
-    (field [rows 100])
-    (field [cols 100])
+    (field [params (make-hasheq '((rows . 100)
+                                  (cols . 100)
+                                  (turn-time . 1000) ;; in milliseconds
+                                  (load-time . 3000) ;; in milliseconds
+                                  (view-radius2 . 93)
+                                  (attack-radius2 . 6)
+                                  (spawn-radius2 . 6)
+                                  (turns . (void))))]
+           )
     (field [game-map (void)])
     (field [enemy-ants empty])
     (field [my-ants empty])
     (field [food (void)])
     (field [hills empty])
-    (field [turn-time 1000])
-    (field [load-time 3000])
     (field [turn-start-time (void)])
-    (field [view-radius2 93])
-    (field [attack-radius2 6])
-    (field [spawn-radius2 6])
-    (field [turns (void)])
     (field [turn (void)])
     
     (super-new)
     
     
     ;;; Helper Functions
+
+    (define (set-map! m r c v)
+      (vector-set! (vector-ref m r) c v))
+    (define (get-map m r c)
+      (vector-ref (vector-ref m r) c))
     
     (define (distance row1 col1 row2 col2)
       "Returns the shortest distance between ROW1,COL1 and ROW2,COL2 for a grid that wraps around."
       (let* ((drow (abs (- row1 row2)))
              (dcol (abs (- col1 col2)))
-             (minrow (min drow (- rows drow)))
-             (mincol (min dcol (- cols dcol))))
+             (minrow (min drow (- (hash-ref params 'rows) drow)))
+             (mincol (min dcol (- (hash-ref params 'cols) dcol))))
         (sqrt (+ (* minrow minrow) (* mincol mincol)))))
     
-    (define (issue-order row col direction)
+    (define/public (issue-order row col direction)
       "Prints a formatted order for ROW,COL and DIRECTION to standard output.
   Silently drops orders when DIRECTION isn't one of :north, :east, :south
   or :west."
       (when (member direction '(#:north #:east #:south #:west))
-        (format (current-output-port) "~&o ~D ~D ~A~%" row col
-                (case direction
-                  ((#:north) "N")
-                  ((#:east)  "E")
-                  ((#:south) "S")
-                  ((#:west)  "W")))))
+        (fprintf (current-output-port) "o ~A ~A ~A~%" row col
+                 (case direction
+                   ((#:north) "N")
+                   ((#:east)  "E")
+                   ((#:south) "S")
+                   ((#:west)  "W")))))
     
     ;; TODO needs better docstring (needs better code as well!)
     (define (new-location row col direction)
@@ -53,20 +59,20 @@
   wraps around."
       (let ((dst-row (cond ((eq? direction '#:north)
                             (if (<= row 0)
-                                (- rows 1)
+                                (- (hash-ref params 'rows) 1)
                                 (- row 1)))
                            ((eq? direction '#:south)
-                            (if (>= (+ row 1) rows)
+                            (if (>= (+ row 1) (hash-ref params 'rows))
                                 0
                                 (+ row 1)))
                            (else row)))
             (dst-col (cond ((eq? direction '#:east)
-                            (if (>= (+ col 1) cols)
+                            (if (>= (+ col 1) (hash-ref params 'cols))
                                 0
                                 (+ col 1)))
                            ((eq? direction '#:west)
                             (if (<= col 0)
-                                (- cols 1)
+                                (- (hash-ref params 'cols) 1)
                                 (- col 1)))
                            (else col))))
         (cons dst-row dst-col)))
@@ -82,181 +88,150 @@
       (format (current-output-port) "~&go~%")
       (flush-output (current-output-port)))
     
-    ...*** need to either replace common-lisp "position" function or rethink the way the parameters are handled in the first place ***....
-    (define (par-value string)
-      "Helper function for parsing game state input from the server."
-      (string->number (substring string (position #\space string) (length string))))
-    
     (define (starts-with sequence subsequence)
+      "Checks if the given sequence contains the subsequence"
       (let ((sublen (length subsequence)))
         (when (and (> sublen 0)
                    (<= sublen (length sequence)))
-          (equal (subseq sequence 0 sublen) subsequence))))
+          (string=? (substring sequence 0 sublen) subsequence))))
     
-    (define (parse-game-parameters )
+    (define (setup)
       "Parses turn 0 game parameters and sets them in *STATE*.  Also creates
   initial game map and assigns it to (GAME-MAP *STATE*)."
-      (loop for line = (read-line *standard-input* nil)
-            until (starts-with line "ready")
-            do (cond ((starts-with line "attackradius2 ")
-                      (setf (slot-value *state* 'attack-radius2) (par-value line)))
-                     ((starts-with line "cols ")
-                      (setf (slot-value *state* 'cols) (par-value line)))
-                     ((starts-with line "loadtime ")
-                      (setf (slot-value *state* 'load-time)
-                            (/ (par-value line) 1000.0)))
-                     ((starts-with line "rows ")
-                      (setf (slot-value *state* 'rows) (par-value line)))
-                     ((starts-with line "spawnradius2 ")
-                      (setf (slot-value *state* 'spawn-radius2) (par-value line)))
-                     ((starts-with line "turns ")
-                      (setf (slot-value *state* 'turns) (par-value line)))
-                     ((starts-with line "turntime ")
-                      (setf (slot-value *state* 'turn-time)
-                            (/ (par-value line) 1000.0)))
-                     ((starts-with line "viewradius2 ")
-                      (setf (slot-value *state* 'view-radius2) (par-value line)))))
-      (setf (slot-value *state* 'game-map)
-            (make-array (list (rows *state*) (cols *state*)) :element-type 'fixnum
-                        :initial-element 0)))
+      (do ((line (regexp-split " " (read-line (current-input-port)))
+                 (regexp-split " " (read-line (current-input-port)))))
+        ((string=? (first line) "ready") #t)
+        (hash-set! params
+                   (string->symbol (first line))
+                   (string->number (second line))))
+      (let ((lcols (hash-ref params 'cols)))
+        (set! game-map
+              (build-vector (hash-ref params 'rows)
+                            (lambda (_)
+                              (make-vector lcols 0))))))
     
     ;; TODO is this the right thing to do?
     (define (reset-game-map )
       "Sets all tiles on the map to land (0) if they're not already land or
   water (1).  Modifies (GAME-MAP *STATE*)."
-      (loop with game-map = (game-map *state*)
-            with dim = (array-dimensions game-map)
-            for row from 0 below (first dim)
-            do (loop for col from 0 below (second dim)
-                     when (> (aref game-map row col) 1)
-                     do (setf (aref game-map row col) 0))))
-    
+      (for/vector ((r game-map))
+                  (vector-map! (lambda (c)
+                                 (if (> c 1) 0 c))
+                               r)))
     ;; TODO needs a docstring
     (define (split-state-string string)
-      (loop with result = nil
-            with value = nil
-            for c across string
-            when (and (char= c #\space) value)
-            do (push (coerce (nreverse value) 'string) result)
-            (setf value nil)
-            when (char/= c #\space)
-            do (push c value)
-            finally (when value
-                      (push (coerce (nreverse value) 'string) result))
-            (return (nreverse result))))
+      (regexp-split " +" string))
     
+
     (define (set-ant string)
       "Parses the \"a row col owner\" STRING and sets the specific map tile to
   an ant of owner.  Modifies (ENEMY-ANTS *STATE*), (MY-ANTS *STATE*) and
   (GAME-MAP *STATE*)."
       (let* ((split (split-state-string string))
-             (row (parse-integer (elt split 1)))
-             (col (parse-integer (elt split 2)))
-             (owner (parse-integer (elt split 3))))
+             (r (string->number (second split)))
+             (c (string->number (third split)))
+             (owner (string->number (fourth split))))
         (if (= owner 0)
-            (push (list row col) (slot-value *state* 'my-ants))
-            (push (list row col owner) (slot-value *state* 'enemy-ants)))
-        (setf (aref (game-map *state*) row col) (+ owner 100))))
-    
+            (set! my-ants (cons (list r c)
+                                my-ants))
+            (set! enemy-ants (cons (list r c)
+                                   enemy-ants)))
+        (set-map! game-map r c (+ owner 100))))
+
     (define (set-dead string)
       "Parses the \"d row col owner\" STRING and sets the specific map tile to
   a dead ant of owner.  Modifies (GAME-MAP *STATE*)."
       (let* ((split (split-state-string string))
-             (row (parse-integer (elt split 1)))
-             (col (parse-integer (elt split 2)))
-             (owner (parse-integer (elt split 3))))
-        (unless (= 2 (aref (game-map *state*) row col))
-          (setf (aref (game-map *state*) row col) (+ owner 200)))))
+             (r (string->number (second split)))
+             (c (string->number (third split)))
+             (owner (string->number (fourth split))))
+        (unless (= 2 (vector-ref (vector-ref game-map r) c))
+          (set-map! game-map r c (+ owner 200)))))
     
     (define (set-food string)
       "Parses the \"f row col\" STRING and sets the specific map tile to food.
   Modifies (FOOD *STATE*) and (GAME-MAP *STATE*)."
       (let* ((split (split-state-string string))
-             (row (parse-integer (elt split 1)))
-             (col (parse-integer (elt split 2))))
-        (push (list row col) (slot-value *state* 'food))
-        (setf (aref (game-map *state*) row col) 2)))
+             (r (string->number (second split)))
+             (c (string->number (third split))))
+        (set! food (cons (list r c) food))
+        (set-map! game-map r c 2)))
     
     (define (set-water string)
       "Parses the \"w row col\" STRING and sets the specific map tile to water.
   Modifies (GAME-MAP *STATE*)."
       (let* ((split (split-state-string string))
-             (row (parse-integer (elt split 1)))
-             (col (parse-integer (elt split 2))))
-        (setf (aref (game-map *state*) row col) 1)))
+             (r (string->number (second split)))
+             (c (string->number (third split))))
+        (set-map! game-map r c 1)))
+  
     
     ;; TODO detect the razing of hills
     (define (set-hill string)
       "Parses the \"a row col owner\" STRING and sets the specific map tile to
   a hill of owner.  Modifies (HILLS *STATE*) and (GAME-MAP *STATE*)."
       (let* ((split (split-state-string string))
-             (row (parse-integer (elt split 1)))
-             (col (parse-integer (elt split 2)))
-             (owner (parse-integer (elt split 3))))
+             (r (string->number (second split)))
+             (c (string->number (third split)))
+             (owner (string->number (fourth split))))
+        (let ((hill-record (list r c owner)))
+          (unless (member hill-record hills)
+            (set! hills (cons hill-record hills))))
+        (set-map! game-map r c (+ owner 300))))
         
-        (let ((hill-record (list row col owner)))
-          (unless (member hill-record (hills *state*) :test 'equal)
-            (push hill-record (slot-value *state* 'hills))))
-        
-        (setf (aref (game-map *state*) row col) (+ owner 300))))
     
     (define (parse-turn )
       "Parses a typical turn.  Modifies *STATE* indirectly through RESET-GAME-MAP
   and the SET-* functions."
       (reset-game-map)
-      (loop for line = (read-line *standard-input* nil)
-            until (starts-with line "go")
-            do (cond ((starts-with line "f ") (set-food line))
-                     ((starts-with line "w ") (set-water line))
-                     ((starts-with line "a ") (set-ant line))
-                     ((starts-with line "d ") (set-dead line))
-                     ((starts-with line "h ") (set-hill line)))))
+      (do ((line (read-line (current-input-port))
+                 (read-line (current-input-port)))
+           )
+        ((string=? (substring line 0 2) "go") #t)
+        (case (string->symbol (first line))
+          ((f) (set-food line))
+          ((w) (set-water line))
+          ((a) (set-ant line))
+          ((d) (set-dead line))
+          ((h) (set-hill line)))))
     
     (define (reset-some-state )
-      "Sets (ENEMY-ANTS *STATE*), (MY-ANTS *STATE*) and (FOOD *STATE*) to NIL."
-      (setf (slot-value *state* 'enemy-ants) nil
-            (slot-value *state* 'my-ants)    nil
-            (slot-value *state* 'food)       nil))
+      "Sets ENEMY-ANTS, MY-ANTS and FOOD to empty."
+      (set! enemy-ants empty)
+      (set! my-ants empty)
+      (set! food empty)
+      )
     
-    (let ((time-units (/ 1.0 internal-time-units-per-second)))
-      ;; TODO correctly name function: doesn't return wall time
-      ;; TODO use DOUBLE-FLOATs?
-      (define (wall-time &key (offset 0))
-        "Returns the time in seconds (as a FLOAT) since SBCL was started."
-        (+ (* (get-internal-real-time) time-units)
-           offset)))
     
     (define (parse-game-state )
       "Calls either PARSE-TURN or PARSE-GAME-PARAMETERS depending on the line
   on standard input.  Modifies *STATE* and returns T if the game has ended,
   otherwise NIL."
-      (setf (slot-value *state* 'turn-start-time) (wall-time))
+      (set! turn-start-time (current-milliseconds))
       (reset-some-state)
-      (loop for line = (read-line *standard-input* nil)
-            until (> (length line) 0)
-            finally (return (cond ((starts-with line "end")
-                                   (parse-turn)
-                                   t)
-                                  ((starts-with line "turn 0")
-                                   (setf (slot-value *state* 'turn) 0)
-                                   (parse-game-parameters)
-                                   nil)
-                                  ((starts-with line "turn ")
-                                   (setf (slot-value *state* 'turn)
-                                         (par-value line))
-                                   (parse-turn)
-                                   nil)))))
+      (do ((line (read-line (current-input-port)) (read-line (current-input-port))))
+        ((> (string-length line) 0)
+         (cond [(string=? (substring line 0 3) "end")
+                (parse-turn) #t]
+               [(string=? (substring line 0 6) "turn 0")
+                (set! turn 0)
+                (setup) #f]
+               [(string=? (substring line 0 5) "turn ")
+                (set! turn (string->number (second (regexp-split " +" line))))
+                (parse-turn) #f]))
+        ))
     
     (define (turn-time-remaining )
-      "Returns the turn time remaining in seconds (as a FLOAT)."
-      (- (+ (turn-start-time *state*) (turn-time *state*))
-         (wall-time)))
+      "Returns the turn time remaining in milliseconds."
+      (- (+ turn-start-time (hash-ref params 'turn-time))
+         (current-milliseconds)))
     
+    #|
     (define (user-interrupt arg)
       (declare (ignore arg))
       (format *debug-io* "~&User interrupt. Aborting...~%")
       (quit))
-    
+    |#
     ));;end class definition
 
 ;; helper functions
@@ -265,4 +240,4 @@
 ;;; Globals
     
 (define *STATE* (new state%))
-    
+
