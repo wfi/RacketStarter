@@ -1,6 +1,18 @@
 #lang racket
 
+(provide (all-defined-out))
+
 ;;;; ants.rkt
+
+;; Constants
+
+(define ANTS 0)
+(define DEAD -1)
+(define LAND -2)
+(define FOOD -3)
+(define WATER -4)
+(define UNSEEN -5)
+(define HILL -6)
 
 ;;; State Class
 
@@ -27,12 +39,17 @@
     
     
     ;;; Helper Functions
-
+    
     (define (set-map! m r c v)
       (vector-set! (vector-ref m r) c v))
     (define (get-map m r c)
       (vector-ref (vector-ref m r) c))
+
+    ;; TODO needs a docstring
+    (define (split-state-string string)
+      (regexp-split " +" string))
     
+
     (define (distance row1 col1 row2 col2)
       "Returns the shortest distance between ROW1,COL1 and ROW2,COL2 for a grid that wraps around."
       (let* ((drow (abs (- row1 row2)))
@@ -54,7 +71,7 @@
                    ((#:west)  "W")))))
     
     ;; TODO needs better docstring (needs better code as well!)
-    (define (new-location row col direction)
+    (define/public (new-location row col direction)
       "Returns '(NEW-ROW . NEW-COL) for ROW,COL and DIRECTION for a grid that
   wraps around."
       (let ((dst-row (cond ((eq? direction '#:north)
@@ -77,20 +94,24 @@
                            (else col))))
         (cons dst-row dst-col)))
     
-    (define (water? row col direction)
+    (define/public (water? row col direction)
       "Returns T if the tile in the DIRECTION of ROW,COL is water, otherwise
   returns NIL."
       (let ((nl (new-location row col direction)))
-        (= 1 (vector-ref (vector-ref game-map (car nl)) (cdr nl)))))
+        (= WATER (vector-ref (vector-ref game-map (car nl)) (cdr nl)))))
+    
+    (define/public (unoccupied? pos)
+      (let ([cont (get-map game-map (car pos) (cdr pos))])
+        (member cont (list DEAD LAND UNSEEN))))
     
     (define (starts-with sequence subsequence)
       "Checks if the given sequence contains the subsequence"
-      (let ((sublen (length subsequence)))
+      (let ((sublen (string-length subsequence)))
         (when (and (> sublen 0)
-                   (<= sublen (length sequence)))
+                   (<= sublen (string-length sequence)))
           (string=? (substring sequence 0 sublen) subsequence))))
     
-    (define (setup)
+    (define/public (setup)
       "Parses turn 0 game parameters and sets them in *STATE*.  Also creates
   initial game map and assigns it to (GAME-MAP *STATE*)."
       (do ((line (regexp-split " " (read-line (current-input-port)))
@@ -103,21 +124,8 @@
         (set! game-map
               (build-vector (hash-ref params 'rows)
                             (lambda (_)
-                              (make-vector lcols 0))))))
+                              (make-vector lcols UNSEEN))))))
     
-    ;; TODO is this the right thing to do?
-    (define (reset-game-map )
-      "Sets all tiles on the map to land (0) if they're not already land or
-  water (1).  Modifies (GAME-MAP *STATE*)."
-      (for/vector ((r game-map))
-                  (vector-map! (lambda (c)
-                                 (if (> c 1) 0 c))
-                               r)))
-    ;; TODO needs a docstring
-    (define (split-state-string string)
-      (regexp-split " +" string))
-    
-
     (define (set-ant string)
       "Parses the \"a row col owner\" STRING and sets the specific map tile to
   an ant of owner.  Modifies (ENEMY-ANTS *STATE*), (MY-ANTS *STATE*) and
@@ -127,12 +135,12 @@
              (c (string->number (third split)))
              (owner (string->number (fourth split))))
         (if (= owner 0)
-            (set! my-ants (cons (list r c)
+            (set! my-ants (cons (cons r c)
                                 my-ants))
-            (set! enemy-ants (cons (list r c)
+            (set! enemy-ants (cons (cons r c)
                                    enemy-ants)))
-        (set-map! game-map r c (+ owner 100))))
-
+        (set-map! game-map r c ANTS)))
+    
     (define (set-dead string)
       "Parses the \"d row col owner\" STRING and sets the specific map tile to
   a dead ant of owner.  Modifies (GAME-MAP *STATE*)."
@@ -140,8 +148,8 @@
              (r (string->number (second split)))
              (c (string->number (third split)))
              (owner (string->number (fourth split))))
-        (unless (= 2 (vector-ref (vector-ref game-map r) c))
-          (set-map! game-map r c (+ owner 200)))))
+        (when (= LAND (vector-ref (vector-ref game-map r) c))
+          (set-map! game-map r c DEAD))))
     
     (define (set-food string)
       "Parses the \"f row col\" STRING and sets the specific map tile to food.
@@ -150,7 +158,7 @@
              (r (string->number (second split)))
              (c (string->number (third split))))
         (set! food (cons (list r c) food))
-        (set-map! game-map r c 2)))
+        (set-map! game-map r c FOOD)))
     
     (define (set-water string)
       "Parses the \"w row col\" STRING and sets the specific map tile to water.
@@ -158,8 +166,8 @@
       (let* ((split (split-state-string string))
              (r (string->number (second split)))
              (c (string->number (third split))))
-        (set-map! game-map r c 1)))
-  
+        (set-map! game-map r c WATER)))
+    
     
     ;; TODO detect the razing of hills
     (define (set-hill string)
@@ -172,25 +180,33 @@
         (let ((hill-record (list r c owner)))
           (unless (member hill-record hills)
             (set! hills (cons hill-record hills))))
-        (set-map! game-map r c (+ owner 300))))
-        
+        (set-map! game-map r c HILL)))
     
-    (define (parse-turn )
+    
+    ;; water only sent the first time so set ants, dead, and food back to land
+    (define (reset-game-map)
+      "Sets all tiles on the map to land (0) if they're not already land or
+  water (1).  Modifies (GAME-MAP *STATE*)."
+      (for-each (lambda (pr) (set-map! game-map (car pr) (cdr pr) LAND)) my-ants)
+      (for-each (lambda (pr) (set-map! game-map (car pr) (cdr pr) LAND)) enemy-ants)
+      )
+    
+    (define/public (parse-turn)
       "Parses a typical turn.  Modifies *STATE* indirectly through RESET-GAME-MAP
   and the SET-* functions."
-      (reset-game-map)
+      ;;(reset-game-map)
       (do ((line (read-line (current-input-port))
                  (read-line (current-input-port)))
            )
         ((string=? (substring line 0 2) "go") #t)
-        (case (string->symbol (first line))
+        (case (string->symbol (substring line 0 1))
           ((f) (set-food line))
           ((w) (set-water line))
           ((a) (set-ant line))
           ((d) (set-dead line))
           ((h) (set-hill line)))))
     
-    (define (reset-some-state )
+    (define/public (reset-some-state)
       "Sets ENEMY-ANTS, MY-ANTS and FOOD to empty."
       (set! enemy-ants empty)
       (set! my-ants empty)
@@ -198,11 +214,12 @@
       )
     
     
-    (define (parse-game-state )
+    (define/public (parse-game-state)
       "Calls either PARSE-TURN or PARSE-GAME-PARAMETERS depending on the line
   on standard input.  Modifies *STATE* and returns T if the game has ended,
   otherwise NIL."
       (set! turn-start-time (current-milliseconds))
+      (reset-game-map)
       (reset-some-state)
       (do ((line (read-line (current-input-port)) (read-line (current-input-port))))
         ((> (string-length line) 0)
@@ -216,7 +233,7 @@
                 (parse-turn) #f]))
         ))
     
-    (define (turn-time-remaining )
+    (define/public (turn-time-remaining )
       "Returns the turn time remaining in milliseconds."
       (- (+ turn-start-time (hash-ref params 'turn-time))
          (current-milliseconds)))
@@ -231,14 +248,14 @@
 
 ;; helper functions
 
-(define (finish-turn )
+(define (finish-turn)
   "Prints the \"finish turn\" string to standard output."
-  (format (current-output-port) "~&go~%")
+  (displayln "go" (current-output-port))
   (flush-output (current-output-port)))
-    
+
 
 
 ;;; Globals
-    
+
 (define *STATE* (new state%))
 

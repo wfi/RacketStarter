@@ -1,14 +1,28 @@
-;;;; MyBot.lisp
-;;;;
-;;;; A wrapper to compile mybot.lisp and ants.lisp into MyBot.
+#lang racket
 
-;;`(setf *error-output* *standard-output*)`
+;; MyBot.rkt
+;;
+;; With thanks to the Common-Lisp starter kit
 
-;; This seems to work for now.
-(declaim (sb-ext:muffle-conditions sb-ext:compiler-note))
-;(declaim (sb-ext:muffle-conditions style-warning))  ; doesn't work
-;(declaim (sb-ext:muffle-conditions warning))        ; idem
-(setf sb-ext:*muffled-warnings* 'style-warning)
+(require "ants.rkt")
 
-(load "main.lisp")
-(save-lisp-and-die "MyBot" :toplevel #'main :executable t)
+
+(define (do-turn)
+  (for-each (lambda (ant)
+              (ormap (lambda (d)
+                       (let ([nl (send *STATE* new-location (car ant) (cdr ant) d)])
+                         (if (send *STATE* unoccupied? nl)
+                             (begin (send *STATE* issue-order (car ant) (cdr ant) d)
+                                    #t)
+                             #f)))
+                     '(#:north #:east #:south #:west)))
+            (get-field my-ants *STATE*)))
+
+;; 
+(define (main)
+  (do () ((send *STATE* parse-game-state))
+    (do-turn)
+    (finish-turn)
+    ))
+
+(main)
